@@ -559,6 +559,13 @@ header.top{background:var(--bg)!important;backdrop-filter:none!important;-webkit
 .capname{font:inherit;font-weight:600;font-size:14px;color:var(--fg);background:transparent;border:0;border-bottom:1px dashed var(--line);padding:1px 0;width:10em;min-width:8em;max-width:60%;outline:none;margin-right:6px}
 .capname:focus{border-bottom-color:var(--accent)}
 .capname::placeholder{color:var(--crit);font-weight:500}
+.pkbtn{font:inherit;font-size:12px;color:var(--accent);background:var(--accent-soft);border:0;border-radius:99px;padding:2px 9px;margin-right:6px;cursor:pointer;white-space:nowrap}
+.capchips{display:grid;gap:6px;padding:4px 0 10px 28px;animation:fadeIn .15s ease-out}
+.pkrow{display:flex;gap:4px;overflow-x:auto;scrollbar-width:none;align-items:center}
+.pkrow::-webkit-scrollbar{display:none}
+.pkl{flex:none;font-size:11.5px;color:var(--muted);width:2.4em}
+.pk{flex:none;font:inherit;font-size:12.5px;padding:3px 10px;border-radius:99px;border:1px solid var(--line);background:transparent;color:var(--fg);cursor:pointer}
+.pk.on{background:var(--hl);border-color:color-mix(in srgb,var(--warn) 45%,transparent)}
 </style>
 
 <style>html,body{margin:0}*,*::before,*::after{box-sizing:border-box}</style>
@@ -3015,6 +3022,46 @@ renderCap = function () {
 };
 const _applyCapW = applyCap;
 applyCap = function () { (capDraft && capDraft.assets || []).forEach(a => { a.name = (a.name || '').trim() || '이름 없는 자산'; delete a.sus; }); _applyCapW(); };
+
+// ===== 이름은 눌러서 고르기 (은행 + 종류) =====
+const PICK_BANK = ['토스뱅크', '카카오뱅크', '국민', '신한', '우리', '하나', '농협', '기업', '케이뱅크', 'SC제일', '새마을', '우체국', '키움', '삼성', '미래에셋', '토스증권', '한국투자', 'NH투자', '업비트'];
+const PICK_KIND = [['통장', 'cash'], ['파킹통장', 'cash'], ['적금', 'cash'], ['예금', 'cash'], ['청약통장', 'cash'], ['CMA', 'cash'], ['모임통장', 'cash'], ['주식', 'invest'], ['ISA', 'invest'], ['코인', 'invest'], ['연금저축', 'pension'], ['IRP', 'pension'], ['카드값', 'debt'], ['신용대출', 'debt'], ['전세대출', 'debt']];
+const BANK_ALIAS = [[/토스뱅크/, '토스뱅크'], [/토스증권/, '토스증권'], [/카카오/, '카카오뱅크'], [/국민|KB/i, '국민'], [/신한|Sh|SOL/i, '신한'], [/우리/, '우리'], [/하나/, '하나'], [/농협|NH(?!투자)/i, '농협'], [/기업|IBK/i, '기업'], [/케이뱅크|K뱅크/, '케이뱅크'], [/SC|제일/, 'SC제일'], [/새마을/, '새마을'], [/우체국/, '우체국'], [/키움/, '키움'], [/삼성/, '삼성'], [/미래에셋/, '미래에셋'], [/한국투자|한투/, '한국투자'], [/NH투자/, 'NH투자'], [/업비트/, '업비트']];
+function guessBank(n) { const h = BANK_ALIAS.find(([re]) => re.test(n || '')); return h ? h[1] : ''; }
+function guessKind(n) { n = ns(n || ''); const order = ['청약통장', '파킹통장', '모임통장', '연금저축', '신용대출', '전세대출', '카드값', 'IRP', 'ISA', 'CMA', '적금', '예금', '코인', '주식', '통장']; const k = order.find(x => n.includes(x.replace('통장', '')) && (x !== '통장' || /통장/.test(n))); return k || ''; }
+let capPickOpen = null;
+function capPickRow(k) {
+  const a = capDraft.assets[k];
+  const chip = (t, on, attr) => `<button type="button" class="pk${on ? ' on' : ''}" ${attr}>${t}</button>`;
+  return `<div class="capchips" data-pickfor="${k}"><div class="pkrow"><span class="pkl">은행</span>${PICK_BANK.map(b => chip(b, a.bank === b, `data-pkbank="${b}"`)).join('')}</div><div class="pkrow"><span class="pkl">종류</span>${PICK_KIND.map(([t]) => chip(t, a.kind === t, `data-pkkind="${t}"`)).join('')}</div></div>`;
+}
+function capPickName(a) { return [a.bank, a.kind].filter(Boolean).join(' ').trim(); }
+const _renderCapW3 = renderCap;
+renderCap = function () {
+  _renderCapW3();
+  if (!capDraft || capDraft.error) return;
+  (capDraft.assets || []).forEach((a, k) => {
+    if (a.bank === undefined) { a.bank = guessBank(a.name); a.kind = guessKind(a.name); }
+    const inp = document.querySelector(`[data-capname="${k}"]`); if (!inp) return;
+    inp.readOnly = false; inp.setAttribute('autocomplete', 'off');
+    const row = inp.closest('.draft-row');
+    if (!row.querySelector('.pkbtn')) inp.insertAdjacentHTML('afterend', `<button type="button" class="pkbtn" data-pkopen="${k}" aria-label="이름 고르기">고르기 ▾</button>`);
+    if (capPickOpen === k) row.insertAdjacentHTML('afterend', capPickRow(k));
+  });
+};
+document.addEventListener('click', e => {
+  const o = e.target.closest('[data-pkopen]');
+  if (o) { e.preventDefault(); const k = +o.dataset.pkopen; capPickOpen = capPickOpen === k ? null : k; renderCap(); return; }
+  const bb = e.target.closest('[data-pkbank],[data-pkkind]'); if (!bb || !capDraft) return;
+  e.preventDefault();
+  const k = +bb.closest('[data-pickfor]').dataset.pickfor, a = capDraft.assets[k];
+  if (bb.dataset.pkbank) a.bank = a.bank === bb.dataset.pkbank ? '' : bb.dataset.pkbank;
+  else { a.kind = a.kind === bb.dataset.pkkind ? '' : bb.dataset.pkkind; const t = (PICK_KIND.find(x => x[0] === a.kind) || [])[1]; if (t) a.type = t; }
+  a.name = capPickName(a); a.sus = !a.name;
+  const cb = document.querySelector(`[data-cap="a${k}"]`); if (cb && a.name) cb.checked = true;
+  if (a.bank && a.kind) capPickOpen = null;
+  renderCap();
+}, true);
 
 try { const v = localStorage.getItem('fp-view'); if (v && views[v]) view = v; } catch (e) { }
 initStore();
