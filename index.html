@@ -686,7 +686,9 @@ function computeTax(p, opts = {}) {
   const housing = Math.min(subDed + leaseDed, 4e6);
   const taxBase = Math.max(0, eIncome - basicDed - siYear.nps - siYear.health - siYear.ltc - siYear.emp - card.deduction - housing);
   const calcTax = progressiveTax(taxBase);
-  const eic = earnedIncomeCredit(calcTax, g);
+  // 중소기업 취업 청년 감면 (조특법 30조): 산출세액의 90%, 연 200만원 한도. 근로소득세액공제는 감면비율만큼 줄어든다
+  const smeReduce = p.smeYouth ? Math.min(calcTax * 0.9, 2e6) : 0;
+  const eic = earnedIncomeCredit(calcTax, g) * (calcTax > 0 ? 1 - smeReduce / calcTax : 1);
   // 세액공제
   const kids = p.kids8 || 0;
   const childCredit = kids <= 0 ? 0 : kids === 1 ? 250000 : kids === 2 ? 550000 : 550000 + (kids - 2) * 400000;
@@ -707,12 +709,12 @@ function computeTax(p, opts = {}) {
   const special = insCredit + medCredit + eduCredit + donCredit;
   const stdCredit = (special === 0 && housing === 0) ? RULES.standardCredit : 0;
   const credits = eic + childCredit + pensionCredit + rentCredit + special + stdCredit + marriageCredit + htCredit;
-  const decided = Math.max(0, Math.floor(calcTax - credits));
+  const decided = Math.max(0, Math.floor(calcTax - smeReduce - credits));
   const local = Math.floor(decided * 0.1);
   return {
     gross: g, nontax, monthly, si, siYear, eid, eIncome, basicDed, card, housing, taxBase,
     calcTax, eic, childCredit, pensionCredit, pensionEligible, pRate, rentCredit, insCredit,
-    medCredit, marriageCredit, stdCredit, eduCredit, donCredit, htCredit, subDed, leaseDed, decided, local, totalTax: decided + local,
+    medCredit, marriageCredit, smeReduce, stdCredit, eduCredit, donCredit, htCredit, subDed, leaseDed, decided, local, totalTax: decided + local,
     marginal: marginalRate(taxBase),
   };
 }
@@ -854,7 +856,7 @@ function profileWon() {
   const p = S.profile, t = S.tax;
   return {
     salary: (+p.salary || 0) * W, bonus: (+p.bonus || 0) * W, nontaxMonthly: (+p.nontax || 0) * W, dependents: +p.dependents || 0, kids8: +p.kids8 || 0,
-    noHome: !!p.noHome, householder: !!p.householder, married2026: !!p.married2026, withheld: (+p.withheld || 0) * W,
+    noHome: !!p.noHome, householder: !!p.householder, married2026: !!p.married2026, smeYouth: !!p.smeYouth, withheld: (+p.withheld || 0) * W,
     card: { credit: t.credit * W, check: t.check * W, market: t.market * W, culture: t.culture * W },
     pensionSavings: t.pensionSavings * W, irp: t.irp * W, subscription: t.subscription * W, rent: t.rent * W,
     protectInsurance: t.protectInsurance * W, medical: t.medical * W,
@@ -1056,7 +1058,7 @@ views.tax = {
     <div class="card hero"><div class="label">2027년 1~2월 연말정산 예상</div><div class="big num" id="refund"></div><div class="note" id="refundNote"></div></div>
     <div class="card"><h3>카드 · 현금영수증</h3><div class="fields compact">${fld('tax.credit', '신용카드')}${fld('tax.check', '체크카드·현금영수증')}${fld('tax.market', '전통시장·대중교통')}${fld('tax.culture', '도서·공연·체육시설')}</div><div id="cardOut" class="stack"></div></div>
     <div class="card"><h3>연금 · 주거 · 기타</h3><div class="fields compact">${fld('tax.pensionSavings', '연금저축 납입')}${fld('tax.irp', 'IRP 납입')}${fld('tax.subscription', '주택청약 납입')}${fld('tax.rent', '월세 (연간)')}${fld('tax.protectInsurance', '보장성 보험료')}${fld('tax.medical', '의료비 (본인·가족)')}${fld('tax.leaseLoan', '전세대출 상환')}${fld('tax.education', '교육비')}${fld('tax.donation', '기부금')}${fld('tax.hometown', '고향사랑기부금')}${fld('profile.withheld', '올해 이미 낸 소득세 (모르면 0)', '만원', { full: true })}</div>
-      <div class="chkgrid">${chk('profile.noHome', '무주택')}${chk('profile.householder', '세대주')}${chk('profile.married2026', '2026년 혼인신고')}</div><div id="pensionOut" class="stack"></div></div>
+      <div class="chkgrid">${chk('profile.noHome', '무주택')}${chk('profile.householder', '세대주')}${chk('profile.married2026', '2026년 혼인신고')}${chk('profile.smeYouth', '중소기업 취업 청년 감면')}</div><div id="smeOut" class="note"></div><div id="pensionOut" class="stack"></div></div>
     <div class="card"><h3>계산 과정</h3><div id="taxRows"></div><p class="note">주택담보대출 이자·정치자금 기부 등 일부 공제는 아직 넣지 않았어요. 정확한 금액은 홈택스 연말정산 미리보기에서 확인하세요.</p></div>`,
   update() {
     const x = snapshot(), st = x.st, t = st.t;
@@ -1065,12 +1067,14 @@ views.tax = {
     set('refundNote', `내야 할 세금 ${man(t.totalTax)} · 이미 낸 세금 ${man(st.withheld)}${st.withheldEstimated ? '(추정)' : ''} · 입력은 2026년 1~12월 연간 금액`);
     const c = t.card, prog = c.threshold > 0 ? Math.min(1, c.total / c.threshold) : 0;
     set('cardOut', `<div class="row"><span>문턱 (총급여 25%)</span><span class="num">${man(c.total)} / ${man(c.threshold)}</span></div><div class="bar ${prog >= 1 ? 'good' : 'warn'}"><i style="width:${prog * 100}%"></i></div><div class="row"><span>카드 소득공제</span><span class="num">${man(c.deduction)}</span></div><div class="note">${c.shortfall > 0 ? `문턱까지 ${man(c.shortfall)} 남았어요. 문턱 전 사용분은 공제가 없어요.` : `문턱을 넘은 뒤 체크카드 100만원을 더 쓰면 소득공제 30만원 → 세금 약 ${man(30 * W * t.marginal * 1.1)} 감소 (공제 한도 안에서).`}</div>`);
+    { const on = !!S.profile.smeYouth, alt = computeTax({ ...x.pw, smeYouth: !on }), diff = Math.abs(alt.totalTax - t.totalTax);
+      set('smeOut', on ? `중소기업 취업자 감면 적용 중 · 소득세 ${man(t.smeReduce)} 감면 (지방세 포함 ${man(diff)} 절세). 취업 당시 15~34세(군복무 기간만큼 연장), 취업일부터 5년간, 회사에 감면 신청서를 내야 월급에서도 덜 떼요.` : `취업 당시 15~34세에 중소기업에 들어왔다면 5년간 소득세 90%(연 200만원 한도) 감면. 체크하면 내 기준 약 ${man(diff)} 덜 내요.`); }
     const room = Math.max(0, 900 - S.tax.pensionSavings - S.tax.irp), sRoom = Math.max(0, 600 - S.tax.pensionSavings);
     set('pensionOut', `<div class="row"><span>연금계좌 세액공제 (${pct(t.pRate * 1.1, 1)})</span><span class="num">${man(t.pensionCredit * 1.1)}</span></div><div class="bar"><i style="width:${Math.min(100, (900 - room) / 9)}%"></i></div><div class="note">${room > 0 ? `남은 한도 ${nf.format(room)}만원${sRoom > 0 ? ` (연금저축 ${nf.format(Math.min(sRoom, room))}만원까지, 나머지는 IRP)` : ' (IRP로)'}. 다 채우면 최대 ${man(room * W * t.pRate * 1.1)} 더 돌려받아요. 55세 전에 해지하면 16.5%가 다시 과세돼요.` : '연 900만원 한도를 다 채웠어요.'}</div>`);
     set('taxRows', rows([
       ['총급여 (비과세 제외)', man(t.gross)], ['근로소득공제', '−' + man(t.eid), 'minus'], [`인적공제 (${1 + (+S.profile.dependents || 0)}명)`, '−' + man(t.basicDed), 'minus'],
       ['4대보험료 공제', '−' + man(t.siYear.nps + t.siYear.health + t.siYear.ltc + t.siYear.emp), 'minus'], ['카드 소득공제', '−' + man(t.card.deduction), 'minus'], ['주택청약·전세대출 소득공제', '−' + man(t.housing), 'minus'],
-      ['과세표준', man(t.taxBase), 'total'], [`산출세액 (한계세율 ${pct(t.marginal)})`, man(t.calcTax)], ['근로소득세액공제', '−' + man(t.eic), 'minus'], ['자녀·결혼 세액공제', '−' + man(t.childCredit + t.marriageCredit), 'minus'],
+      ['과세표준', man(t.taxBase), 'total'], [`산출세액 (한계세율 ${pct(t.marginal)})`, man(t.calcTax)], ['중소기업 취업자 감면 (90%)', '−' + man(t.smeReduce), 'minus'], ['근로소득세액공제', '−' + man(t.eic), 'minus'], ['자녀·결혼 세액공제', '−' + man(t.childCredit + t.marriageCredit), 'minus'],
       ['연금계좌 세액공제', '−' + man(t.pensionCredit), 'minus'], ['월세 세액공제', '−' + man(t.rentCredit), 'minus'], ['보험료·의료비·교육비 세액공제', '−' + man(t.insCredit + t.medCredit + t.eduCredit), 'minus'], ['기부금·고향사랑 세액공제', '−' + man(t.donCredit + t.htCredit), 'minus'], ['표준세액공제', '−' + man(t.stdCredit), 'minus'],
       ['결정세액', man(t.decided), 'total'], ['지방소득세 (10%)', man(t.local)], ['총 세금', man(t.totalTax), 'total']]));
   },
@@ -2018,7 +2022,7 @@ function hiddenPolicies(x) {
   const g = x.pw.salary - x.pw.nontaxMonthly * 12, age = x.age, P = S.profile, young = age >= 15 && age <= 34;
   const tax = x.st.t.totalTax;
   return [
-    { name: '중소기업 취업 청년 소득세 감면', link: ['홈택스', 'https://www.hometax.go.kr'], ok: young && g > 0, tags: ['starter', 'job'], why: '취업 당시 15~34세, 중소기업 재직 (군복무 기간만큼 나이 기준 연장)', body: `5년간 소득세 90%를 감면, 연 200만원 한도. 내 연봉 기준 연 약 ${man(Math.min(2e6, x.st.t.decided * 0.9))} 덜 내요. 회사에 감면 신청서를 내면 되고, 지난해 것을 놓쳤으면 홈택스 경정청구로 돌려받을 수 있어요.` },
+    { name: '중소기업 취업 청년 소득세 감면', link: ['홈택스', 'https://www.hometax.go.kr'], ok: young && g > 0, tags: ['starter', 'job'], why: '취업 당시 15~34세, 중소기업 재직 (군복무 기간만큼 나이 기준 연장)', body: `5년간 소득세 90%를 감면, 연 200만원 한도. ${P.smeYouth ? `절세 탭에 적용 중 — 연 약 ${man(computeTax({ ...x.pw, smeYouth: false }).totalTax - x.st.t.totalTax)} 덜 내요.` : `내 연봉 기준 연 약 ${man(x.st.t.totalTax - computeTax({ ...x.pw, smeYouth: true }).totalTax)} 덜 내요. 절세 탭에서 체크하면 계산에 반영돼요.`} 회사에 감면 신청서를 내면 되고, 지난해 것을 놓쳤으면 홈택스 경정청구로 돌려받을 수 있어요.` },
     { name: 'K-패스 · 모두의 카드', link: ['K-패스', 'https://korea-pass.kr'], ok: true, tags: ['starter'], why: '월 15회 이상 대중교통 이용', body: `쓴 교통비의 일부를 돌려받아요(${age >= 19 && age <= 34 ? '청년 30%' : '일반 20%'}). 2026년부터 ‘모두의 카드’가 생겨 한 달 기준금액을 넘는 교통비는 상한 안에서 전액 돌려받고, 둘 중 유리한 쪽이 자동 적용돼요.` },
     { name: '고향사랑기부제', link: ['고향사랑e음', 'https://ilovegohyang.go.kr'], ok: tax > 0, tags: [], why: '주소지가 아닌 지자체에 기부', body: `10만원까지 전액, 10만~20만원 구간은 44% 세액공제(2026년 신설 구간). 20만원 기부하면 세금 14.4만원 + 답례품 6만원(30%)으로 기부액보다 많이 돌아와요. 12월 31일 기부분까지 올해 공제.` },
     { name: '청년월세 지원', link: ['복지로', 'https://www.bokjiro.go.kr'], ok: young && P.noHome && g <= 2e7, tags: ['starter', 'home'], why: '19~34세 무주택, 본인 소득 기준중위 60% 이하(1인 월 약 140만원)', body: '월 최대 20만원, 12개월. 보증금 5,000만원·월세 70만원 이하 집. 2026년부터 상시 신청(복지로·주민센터). 연봉이 높으면 대신 월세 세액공제를 챙기세요.' },
