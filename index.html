@@ -555,6 +555,10 @@ header.top{background:var(--bg)!important;backdrop-filter:none!important;-webkit
 .qabar button{flex:none;font:inherit;font-weight:400;letter-spacing:-.02em;font-size:12px;line-height:1.4;padding:3px 10px;border-radius:99px;border:1px solid var(--line);background:transparent;color:var(--muted);cursor:pointer}
 .qabar button:active{transform:scale(.95);background:var(--hl)}
 .qabar .qaclr{margin-left:auto;color:var(--muted)}
+.draft-row>span{flex:1;min-width:0}
+.capname{font:inherit;font-weight:600;font-size:14px;color:var(--fg);background:transparent;border:0;border-bottom:1px dashed var(--line);padding:1px 0;width:10em;min-width:8em;max-width:60%;outline:none;margin-right:6px}
+.capname:focus{border-bottom-color:var(--accent)}
+.capname::placeholder{color:var(--crit);font-weight:500}
 </style>
 
 <style>html,body{margin:0}*,*::before,*::after{box-sizing:border-box}</style>
@@ -2513,7 +2517,7 @@ function mergeCaps(rs) {
   for (const d of rs) {
     const k = d.kind; if (d.notes) out.notes.push(String(d.notes).slice(0, 200));
     if (k === 'assets') (d.assets || []).forEach(a => {
-      const it = { name: String(a.name || '자산').replace(/\d{3,}[-\d]*/g, '').trim().slice(0, 40) || '자산', type: okA.has(a.type) ? a.type : 'etc', amt: Math.max(0, Math.round((+a.amt || 0) * 10) / 10) };
+      const it = { name: a.sus ? '' : (String(a.name || '자산').replace(/\d{3,}[-\d]*/g, '').trim().slice(0, 40) || '자산'), type: okA.has(a.type) ? a.type : 'etc', amt: Math.max(0, Math.round((+a.amt || 0) * 10) / 10), ...(a.sus ? { sus: true } : {}) };
       const key = it.name + '|' + it.amt; if (it.amt > 0 && !seen.has(key)) { seen.add(key); out.assets.push(it); }
     });
     else if (k === 'insurance') (d.insurance || []).forEach(i => out.insurance.push({ name: String(i.name || '보험').slice(0, 60), kind: okK.has(i.kind) ? i.kind : 'etc', cat: ['protect', 'saving', 'annuity'].includes(i.cat) ? i.cat : 'protect', premium: Math.max(0, Math.round((+i.premium || 0) * 10) / 10), cover: Math.max(0, Math.round(+i.cover || 0)), renew: i.renew === '갱신' ? '갱신' : '비갱신', until: Math.round(+i.until || 0) || 2070, start: now().getFullYear() }));
@@ -2794,24 +2798,32 @@ function cleanName(n) {
   n = n.split(' ').filter((t, i, a) => !(t.length === 1 && /[A-Za-z0-9]/.test(t) && (i === 0 || i === a.length - 1))).join(' ');
   return n.replace(/^[\-·()\s]+|[\-·(\s]+$/g, '').trim();
 }
+const ORG = /토스|카카오|케이뱅크|국민|KB|신한|우리|하나|농협|NH|기업|IBK|SC|씨티|부산|대구|경남|광주|전북|제주|수협|새마을|신협|우체국|키움|삼성|미래에셋|한국투자|한투|메리츠|meritz|대신|유안타|하이|교보|DB|현대|롯데|BC|비씨|업비트|빗썸|네이버|페이|뱅크|증권|은행|카드|저축|적금|예금|통장|CMA|ISA|IRP|연금|청약|파킹|세이프박스|펀드|주식|대출/i;
+const SKIP = /총자산|순자산|자산\s*합계|포함|제외|더\s*보기|전체\s*보기|숨김|자산\s*연결|새로고침|업데이트|기준|이번\s*달|지난\s*달|소비|수익률|손익|%|포인트\s*적립|혜택|광고/;
+function hangulCount(s) { return (s.match(/[가-힣]/g) || []).length; }
 function parseAssets(text) {
   const L = linesOf(text), out = [];
-  let prev = '';
-  for (const l of L) {
-    const w = wonOf(l);
-    const label = l.replace(/[-+]?\d[\d,.]*\s*(억|만|원)*/g, ' ').replace(/[원>›→·•*]/g, ' ').replace(/\s+/g, ' ').trim();
-    if (w === null || w < 1000) { const c = cleanName(label); if (c.length >= 2 && !/^\d/.test(c)) prev = c; continue; }
-    if (/%|수익|손익|이자|이번\s*달|지난\s*달|총|합계|전체|순자산|자산\s*$|평가금/.test(l)) { prev = ''; continue; }
-    let name = label.length >= 2 ? label : prev;
-    if (!name) continue;
-    name = cleanName(name.replace(/\d{3,}[-\d]*/g, '')).slice(0, 30);
-    if (name.length < 2) continue;
-    const k = ns(name + ' ' + prev);
-    const type = /대출|카드값|카드대금|마이너스|할부|빚/.test(k) ? 'debt' : /연금|IRP|퇴직/i.test(k) ? 'pension' : /주식|증권|ETF|펀드|ISA|코인|비트|투자|해외/i.test(k) ? 'invest' : /보증금|전세|아파트|주택/.test(k) ? 'property' : /자동차|차량/.test(k) ? 'car' : 'cash';
-    out.push({ name, type, amt: man1(w) });
+  let prev = '', total = null;
+  for (let i = 0; i < L.length; i++) {
+    const l = L[i], w = wonOf(l);
+    const label = l.replace(/[-+]?\d[\d,.]*\s*(억|만|원)*/g, ' ').replace(/[원>›→·•*~=®©|\[\]{}]/g, ' ').replace(/\s+/g, ' ').trim();
+    // 총자산은 금액이 같은 줄이나 다음 줄에 있어요 → 그 금액은 개별 항목에서 빼기
+    if (/총자산|순자산|자산\s*합계/.test(ns(l))) { total = w !== null ? man1(w) : (L[i + 1] && wonOf(L[i + 1]) !== null ? man1(wonOf(L[i + 1])) : total); prev = ''; continue; }
+    if (w === null || w < 1000) { const c = cleanName(label); if (hangulCount(c) >= 2 && !SKIP.test(c)) prev = c; else if (SKIP.test(l)) prev = ''; continue; }
+    if (SKIP.test(l) && !ORG.test(label.replace(SKIP, ''))) { prev = ''; continue; }
+    let name = cleanName(label.replace(SKIP, '').replace(/\d{3,}[-\d]*/g, ''));
+    if (hangulCount(name) < 2 && !ORG.test(name)) name = prev || name;
     prev = '';
+    name = name.slice(0, 30);
+    const amt = man1(w);
+    if (total !== null && Math.abs(amt - total) < 0.5) continue;
+    const k = ns(name);
+    const type = /대출|카드값|카드대금|마이너스|할부|빚/.test(k) ? 'debt' : /연금|IRP|퇴직/i.test(k) ? 'pension' : /주식|증권|ETF|펀드|ISA|코인|비트|투자|해외|meritz|키움|미래에셋|한투|한국투자/i.test(k) ? 'invest' : /보증금|전세|아파트|주택/.test(k) ? 'property' : /자동차|차량/.test(k) ? 'car' : 'cash';
+    const sus = hangulCount(name) < 2 && !ORG.test(name);
+    out.push({ name: sus ? '' : name, type, amt, sus });
   }
-  return out;
+  // 같은 금액이 여러 번 나오면 하나만
+  const seen = new Set(); return out.filter(a => { const key = a.amt + '|' + a.name; if (seen.has(key)) return false; seen.add(key); return true; });
 }
 const HT_KW = [[/신용카드(?!등)/, 'credit'], [/직불|체크카드/, 'check'], [/현금영수증/, 'check'], [/전통시장/, 'market'], [/대중교통/, 'market'], [/도서|공연|박물관|미술관|체육|문화/, 'culture'], [/의료비/, 'medical'], [/교육비/, 'education'], [/기부금/, 'donation'], [/보장성|일반보험|보험료/, 'protectInsurance'], [/연금저축/, 'pensionSavings'], [/퇴직연금|IRP/i, 'irp'], [/청약/, 'subscription'], [/월세/, 'rent'], [/임차|전세자금|원리금/, 'leaseLoan'], [/기납부|이미낸/, 'withheld']];
 function parseHometax(text) {
@@ -2946,6 +2958,24 @@ renderCap = function () {
   const box = document.getElementById('capBox');
   if (box && capDraft && !capDraft.error && !box.querySelector('.ocrnote')) box.insertAdjacentHTML('afterbegin', '<p class="note ocrnote">사진에서 읽은 값이라 틀릴 수 있어요. 이상한 건 체크를 빼고, 채운 뒤 각 탭에서 고치면 돼요.</p>');
 };
+
+// 읽은 이름을 그 자리에서 고칠 수 있게
+const _renderCapW2 = renderCap;
+renderCap = function () {
+  _renderCapW2();
+  if (!capDraft || capDraft.error) return;
+  (capDraft.assets || []).forEach((a, k) => {
+    const cb = document.querySelector(`[data-cap="a${k}"]`); if (!cb) return;
+    const b = cb.parentElement.querySelector('b'); if (!b) return;
+    const inp = document.createElement('input'); inp.type = 'text'; inp.className = 'capname'; inp.value = a.name; inp.placeholder = '이름 적기'; inp.dataset.capname = k;
+    inp.addEventListener('click', e => e.preventDefault());
+    inp.addEventListener('input', () => { capDraft.assets[k].name = inp.value; if (inp.value.trim()) cb.checked = true; });
+    b.replaceWith(inp);
+    if (a.sus && !a.name) cb.checked = false;
+  });
+};
+const _applyCapW = applyCap;
+applyCap = function () { (capDraft && capDraft.assets || []).forEach(a => { a.name = (a.name || '').trim() || '이름 없는 자산'; delete a.sus; }); _applyCapW(); };
 
 try { const v = localStorage.getItem('fp-view'); if (v && views[v]) view = v; } catch (e) { }
 initStore();
