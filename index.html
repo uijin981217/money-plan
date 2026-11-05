@@ -2778,7 +2778,11 @@ function wonOf(str) {
 }
 const man1 = w => Math.round(w / 1e3) / 10;
 const ns = s => s.replace(/\s+/g, '');
-function linesOf(text) { return text.split(/\n+/).map(l => l.replace(/[|｜]/g, ' ').replace(/\s{2,}/g, ' ').trim()).filter(Boolean); }
+function normLine(l) {
+  return l.replace(/[|｜]/g, ' ').replace(/,\./g, ',').replace(/(\d)\.(\d{3})(?!\d)/g, '$1,$2')
+    .replace(/(\d)\s*(2!|#|윈|웬|H|uz|운)(?![가-힣A-Za-z])/g, '$1원').replace(/\s{2,}/g, ' ').trim();
+}
+function linesOf(text) { return text.split(/\n+/).map(normLine).filter(Boolean); }
 
 function classify(text) {
   const t = ns(text), c = re => (t.match(re) || []).length;
@@ -2801,30 +2805,51 @@ function cleanName(n) {
 const ORG = /토스|카카오|케이뱅크|국민|KB|신한|우리|하나|농협|NH|기업|IBK|SC|씨티|부산|대구|경남|광주|전북|제주|수협|새마을|신협|우체국|키움|삼성|미래에셋|한국투자|한투|메리츠|meritz|대신|유안타|하이|교보|DB|현대|롯데|BC|비씨|업비트|빗썸|네이버|페이|뱅크|증권|은행|카드|저축|적금|예금|통장|CMA|ISA|IRP|연금|청약|파킹|세이프박스|펀드|주식|대출/i;
 const SKIP = /총자산|순자산|자산\s*합계|포함|제외|더\s*보기|전체\s*보기|숨김|자산\s*연결|새로고침|업데이트|기준|이번\s*달|지난\s*달|소비|수익률|손익|%|포인트\s*적립|혜택|광고/;
 function hangulCount(s) { return (s.match(/[가-힣]/g) || []).length; }
-const SECTION = /^(입출금|저축|투자|대출|카드|증권|연금|보험|현금|자산|부채|기타)$/;
+const SECTION = /^(입출금|저축|투자|대출|카드|증권|연금|보험|현금|자산|부채|기타|계좌|계좌현금|예적금|적금|예금|포인트|부동산|자동차)$/;
+const NOISE_NAME = /더보기|잔액보기|송금|전체포함|전체제외|^포함$|^제외$|편집|목표|조회|가계부|금융쇼핑|건강/;
+function stripLead(n) {
+  const tk = n.split(' ');
+  while (tk.length > 1 && hangulCount(tk[0]) === 0 && !/^(KB|NH|IBK|SC|MY|Npay|Sh|SUPER|ISA|IRP|CMA|BC|DB)$/i.test(tk[0])) tk.shift();
+  while (tk.length > 1 && hangulCount(tk[tk.length - 1]) === 0 && !/^(KB|NH|IBK|SC|MY|Npay|Sh|SUPER|ISA|IRP|CMA|BC|DB|\(.*\))$/i.test(tk[tk.length - 1])) tk.pop();
+  return tk.join(' ');
+}
 function isNameLine(l) {
   if (wonOf(l) !== null) return false;
-  const c = cleanName(l.replace(/[·•]\s*주계좌.*$/, '').replace(/[-+]?\d+(\.\d+)?%/g, ''));
-  if (hangulCount(c) < 2 && !ORG.test(c)) return false;
-  if (SECTION.test(ns(c)) || /^(전체)?(포함|제외)$/.test(ns(c)) || /총자산|순자산/.test(ns(c))) return false;
+  let c = cleanName(l.replace(/[·•ㆍ]\s*주계좌.*$/, '').replace(/[-+]?\d+(\.\d+)?%/g, '').replace(/\s*(신규|NEW)\s*$/i, ''));
+  c = stripLead(c);
+  const k = ns(c);
+  if (NOISE_NAME.test(k) || SECTION.test(k) || /총자산|순자산/.test(k)) return false;
+  if (hangulCount(c) < 3 && !(ORG.test(c) && hangulCount(c) >= 2)) return false;
   return c;
 }
+function layoutOf(t) {
+  const k = ns(t), c = re => (k.match(re) || []).length;
+  if (c(/포함|제외/g) >= 3) return 'below';       // 토스 자산 편집: 금액 ↓ 이름
+  if (c(/송금|잔액보기|더보기/g) >= 2) return 'above'; // 카카오페이: 이름 ↓ 금액
+  return 'above';
+}
 function parseAssets(text) {
-  const L = linesOf(text), out = [], used = new Set();
+  const L = linesOf(text), out = [], used = new Set(), mode = layoutOf(text);
   let total = null, prev = '';
   for (let i = 0; i < L.length; i++) {
     const l = L[i], k = ns(l);
-    if (/총자산|순자산|자산합계/.test(k)) { const w0 = wonOf(l); total = w0 !== null ? man1(w0) : (L[i + 1] && wonOf(L[i + 1]) !== null ? man1(wonOf(L[i + 1])) : total); if (w0 === null) used.add(i + 1); continue; }
+    if (/총자산|순자산|자산합계/.test(k)) { const w0 = wonOf(l); total = w0 !== null ? man1(w0) : (L[i + 1] && wonOf(L[i + 1]) !== null ? man1(wonOf(L[i + 1])) : total); if (w0 === null) used.add(i + 1); prev = ''; continue; }
     if (used.has(i)) continue;
     const w = wonOf(l);
-    if (w === null) { const n = isNameLine(l); if (n) prev = n; continue; }
-    // 같은 줄에 있는 이름 (포함/제외 버튼·기호 빼고)
-    let name = cleanName(l.replace(/[-+]?\d[\d,.]*\s*(억|만|원)*/g, ' ').replace(/(전체\s*)?(포함|제외)/g, ' ').replace(/[원>›→·•*~=®©|\[\]{}^]/g, ' '));
-    if (hangulCount(name) < 2 && !ORG.test(name)) {
+    if (w === null) {
+      const n = isNameLine(l);
+      if (n) prev = n; else if (SECTION.test(ns(cleanName(l))) || /전체(포함|제외)/.test(k)) prev = '';
+      continue;
+    }
+    // 같은 줄 이름 (뱅크샐러드 등)
+    let label = l.replace(/[-+]?\d[\d,.]*\s*(억|만|원)*/g, ' ').replace(/(전체\s*)?(포함|제외)/g, ' ').replace(/[원>›→·•ㆍ*~=®©\[\]{}^]/g, ' ');
+    let name = stripLead(cleanName(label));
+    if (SECTION.test(ns(name))) { prev = ''; continue; } // 구분 합계 줄
+    if (hangulCount(name) < 3 && !(ORG.test(name) && hangulCount(name) >= 2)) {
       name = '';
-      // 토스·카카오페이처럼 금액 아래 줄에 이름이 있는 화면
-      for (let j = i + 1; j <= i + 3 && j < L.length; j++) { if (wonOf(L[j]) !== null) break; const n = isNameLine(L[j]); if (n) { name = n; used.add(j); break; } }
-      if (!name) name = prev;
+      if (mode === 'below') {
+        for (let j = i + 1; j <= i + 3 && j < L.length; j++) { if (wonOf(L[j]) !== null) break; const kj = ns(L[j]); if (/전체(포함|제외)/.test(kj) || SECTION.test(ns(cleanName(L[j])))) break; const n = isNameLine(L[j]); if (n) { name = n; used.add(j); break; } }
+      } else name = prev;
     }
     prev = '';
     if (w < 1000) continue;
@@ -2833,8 +2858,8 @@ function parseAssets(text) {
     name = name.slice(0, 30);
     const kk = ns(name);
     const type = /대출|카드값|카드대금|마이너스|할부|빚/.test(kk) ? 'debt' : /연금|IRP|퇴직/i.test(kk) ? 'pension' : /주식|증권|ETF|펀드|ISA|코인|비트|투자|해외|meritz|키움|미래에셋|한투|한국투자/i.test(kk) && !/통장/.test(kk) ? 'invest' : /보증금|전세|아파트|주택(?!드림)/.test(kk) ? 'property' : /자동차|차량/.test(kk) ? 'car' : 'cash';
-    const sus = hangulCount(name) < 2 && !ORG.test(name);
-    out.push({ name: sus ? '' : name, type, amt, sus });
+    const sus = !name;
+    out.push({ name, type, amt, sus });
   }
   const seen = new Set(); return out.filter(a => { const key = a.amt + '|' + a.name; if (seen.has(key)) return false; seen.add(key); return true; });
 }
@@ -2892,18 +2917,19 @@ async function ocrWorker(onP) {
   if (_ocr) return _ocr;
   if (!window.Tesseract) await loadScript('https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js');
   _ocr = await Tesseract.createWorker(['kor', 'eng'], 1, { logger: m => { if (onP && m.status === 'loading language traineddata') onP('처음 한 번 글자 데이터 받는 중…'); } });
+  try { await _ocr.setParameters({ tessedit_pageseg_mode: '4', preserve_interword_spaces: '1' }); } catch (e) { }
   return _ocr;
 }
 async function ocrPrep(file) {
   try {
     const bmp = await createImageBitmap(file);
-    const sc = bmp.width < 1400 ? 2 : 1;
-    const c = document.createElement('canvas'); c.width = bmp.width * sc; c.height = bmp.height * sc;
+    const sc = bmp.width < 1400 ? 1.5 : 1;
+    const c = document.createElement('canvas'); c.width = Math.round(bmp.width * sc); c.height = Math.round(bmp.height * sc);
     const g = c.getContext('2d'); g.imageSmoothingQuality = 'high'; g.drawImage(bmp, 0, 0, c.width, c.height);
     const im = g.getImageData(0, 0, c.width, c.height), d = im.data;
     let sum = 0; for (let i = 0; i < d.length; i += 4) sum += d[i] * .3 + d[i + 1] * .59 + d[i + 2] * .11;
     const dark = sum / (d.length / 4) < 110; // 다크모드 캡처는 뒤집기
-    for (let i = 0; i < d.length; i += 4) { let v = d[i] * .3 + d[i + 1] * .59 + d[i + 2] * .11; if (dark) v = 255 - v; v = v > 200 ? 255 : v < 120 ? 0 : (v - 120) * 255 / 80; d[i] = d[i + 1] = d[i + 2] = v; }
+    for (let i = 0; i < d.length; i += 4) { let v = d[i] * .3 + d[i + 1] * .59 + d[i + 2] * .11; if (dark) v = 255 - v; d[i] = d[i + 1] = d[i + 2] = v; }
     g.putImageData(im, 0, 0); return c;
   } catch (e) { return file; }
 }
