@@ -578,6 +578,14 @@ header.top{background:var(--bg)!important;backdrop-filter:none!important;-webkit
 .lv-t{display:grid;gap:1px}.lv-t b{font-weight:600;font-size:14.5px}.lv-t .note{line-height:1.45}
 .lv-s{font-size:13px;color:var(--good);white-space:nowrap;margin-top:2px}
 .fchip.addgoal{border-style:dashed;color:var(--accent)}
+.subseg{position:sticky;top:var(--hdr,64px);z-index:12;display:grid;grid-template-columns:repeat(var(--n),1fr);background:color-mix(in srgb,var(--line) 70%,var(--bg));border-radius:12px;padding:3px;margin:2px 0 0;box-shadow:0 0 0 6px var(--bg)}
+.subseg button{position:relative;z-index:1;border:0;background:transparent;color:var(--muted);font:inherit;font-family:var(--f-hand);font-weight:500;letter-spacing:-.04em;font-size:14.5px;padding:7px 2px;border-radius:9px;white-space:nowrap;cursor:pointer;transition:color .2s}
+.subseg button[aria-selected="true"]{color:var(--fg);font-weight:600}
+.subind{position:absolute;top:3px;bottom:3px;left:3px;width:calc((100% - 6px) / var(--n));background:var(--surface);border-radius:9px;box-shadow:0 1px 3px rgba(80,60,30,.15);transition:transform .3s cubic-bezier(.2,.8,.2,1)}
+.subvp{overflow:hidden;transition:height .3s cubic-bezier(.2,.8,.2,1);margin-inline:-4px;padding-inline:4px}
+.subtrack{display:flex;align-items:flex-start;transition:transform .34s cubic-bezier(.2,.8,.2,1);will-change:transform}
+.subpane{flex:0 0 100%;min-width:0;display:grid;gap:14px;padding:4px 4px 6px;box-sizing:border-box}
+@media (prefers-reduced-motion: reduce){.subtrack,.subvp,.subind{transition:none!important}}
 </style>
 
 <style>html,body{margin:0}*,*::before,*::after{box-sizing:border-box}</style>
@@ -2843,6 +2851,75 @@ todoItems = function (x) {
   coachLevers(x).filter(l => cs.on.includes(l.k)).forEach(l => out.push({ t: l.t, v: `${esc(g.name)}`, d: l.d.replace(/<[^>]+>/g, ''), p: 1.2, due: false, tags: [] }));
   return out.sort((a, b) => a.p - b.p);
 };
+
+// ===================== 탭 안 작은 탭 + 옆으로 넘기기 / 하나만 펼치기 =====================
+const SUB_TOP = { pay: e => e.classList.contains('hero'), tax: e => e.classList.contains('hero'), ins: e => e.classList.contains('hero') };
+const SUB = {
+  pay: [['지출·저축', e => e.classList.contains('sect') || e.matches('div.card')], ['통장', e => e.matches('details.datacard')]],
+  tax: [['캡처로 채우기', e => /홈택스/.test(e.dataset.sec || '')], ['직접 입력', e => /카드|연금/.test(e.dataset.sec || '')], ['계산 과정', e => /계산 과정/.test(e.dataset.sec || '')]],
+  ins: [['보장 점검', e => /보장 점검/.test(e.dataset.sec || '')], ['가입 목록', e => true]],
+  plan: [['목표', e => /plan:목표$/.test(e.dataset.sec || '')], ['이벤트', e => /이벤트/.test(e.dataset.sec || '')], ['노후', e => /노후/.test(e.dataset.sec || '')]],
+  policy: [['현행 제도', e => /현행/.test(e.dataset.sec || '')], ['놓치기 쉬운 것', e => /놓치기/.test(e.dataset.sec || '') || e.matches('details.datacard')], ['개편안', e => /개편안|출처/.test(e.dataset.sec || '')]],
+};
+let subState = {}; try { subState = JSON.parse(localStorage.getItem('fp-sub') || '{}') || {}; } catch (e) { }
+let subRO = null;
+function buildSubtabs() {
+  const def = SUB[view], sec = document.querySelector('section.view');
+  if (!def || !sec || sec.querySelector('.subseg')) return;
+  const top = SUB_TOP[view];
+  const kids = [...sec.children].filter(e => !e.matches('h2, p.lead') && !(top && top(e)));
+  if (!kids.length) return;
+  const panes = def.map(() => { const p = document.createElement('div'); p.className = 'subpane'; return p; });
+  kids.forEach(e => { const i = def.findIndex(([, m]) => m(e)); panes[i < 0 ? 0 : i].appendChild(e); });
+  const seg = document.createElement('div'); seg.className = 'subseg'; seg.setAttribute('role', 'tablist');
+  seg.style.setProperty('--n', def.length);
+  seg.innerHTML = `<i class="subind" aria-hidden="true"></i>` + def.map(([t], i) => `<button type="button" role="tab" data-sub="${i}">${t}</button>`).join('');
+  const vp = document.createElement('div'); vp.className = 'subvp';
+  const tr = document.createElement('div'); tr.className = 'subtrack';
+  panes.forEach(p => tr.appendChild(p)); vp.appendChild(tr);
+  const anchor = (top && [...sec.children].filter(top).pop()) || sec.querySelector(':scope > h2');
+  if (anchor) anchor.after(seg); else sec.prepend(seg);
+  seg.after(vp);
+  subGo(Math.min(+subState[view] || 0, def.length - 1), false);
+}
+function subGo(i, animate = true) {
+  const sec = document.querySelector('section.view'); if (!sec) return;
+  const tr = sec.querySelector('.subtrack'), vp = sec.querySelector('.subvp'), seg = sec.querySelector('.subseg'); if (!tr) return;
+  const panes = [...tr.children]; i = Math.max(0, Math.min(panes.length - 1, i));
+  subState[view] = i; try { localStorage.setItem('fp-sub', JSON.stringify(subState)); } catch (e) { }
+  tr.style.transition = animate ? '' : 'none'; vp.style.transition = animate ? '' : 'none';
+  tr.style.transform = `translateX(${-i * 100}%)`;
+  seg.querySelector('.subind').style.transform = `translateX(${i * 100}%)`;
+  seg.querySelectorAll('[data-sub]').forEach((b, k) => { b.setAttribute('aria-selected', k === i); b.tabIndex = k === i ? 0 : -1; });
+  panes.forEach((p, k) => { p.setAttribute('aria-hidden', k !== i); p.inert = k !== i; });
+  const secs = panes[i].querySelectorAll(':scope > details.sec'); if (secs.length && ![...secs].some(d => d.open)) secs[0].open = true;
+  const fit = () => { vp.style.height = panes[i].offsetHeight + 'px'; };
+  fit();
+  if (subRO) subRO.disconnect();
+  if (window.ResizeObserver) { subRO = new ResizeObserver(fit); subRO.observe(panes[i]); }
+  if (!animate) requestAnimationFrame(() => { tr.style.transition = ''; vp.style.transition = ''; });
+  if (animate) { const top = seg.getBoundingClientRect().top; const hdr = (document.querySelector('header.top') || {}).offsetHeight || 0; if (top < hdr - 2) window.scrollTo({ top: window.scrollY + top - hdr - 4, behavior: 'smooth' }); }
+}
+const _renderSub = render; render = function () { _renderSub(); buildSubtabs(); const h = document.querySelector('header.top'); if (h) document.documentElement.style.setProperty('--hdr', h.offsetHeight + 'px'); };
+document.addEventListener('click', e => { const b = e.target.closest('[data-sub]'); if (b) subGo(+b.dataset.sub); });
+document.addEventListener('keydown', e => { const b = e.target.closest && e.target.closest('[data-sub]'); if (!b || !/Arrow(Left|Right)/.test(e.key)) return; const i = +b.dataset.sub + (e.key === 'ArrowRight' ? 1 : -1); subGo(i); const nb = document.querySelector(`[data-sub="${subState[view]}"]`); if (nb) nb.focus(); });
+// 옆으로 밀기 (가로로 스크롤되는 영역에서는 무시)
+let swX = null, swY = null, swOk = false;
+document.addEventListener('touchstart', e => {
+  const t = e.touches[0]; swX = t.clientX; swY = t.clientY;
+  swOk = !!e.target.closest('.subvp') && !e.target.closest('input, textarea, select, .pkrow, .qabar, .fchips, .chart-wrap, #evChart, table, .cbar, .sheet, [data-noswipe]');
+}, { passive: true });
+document.addEventListener('touchend', e => {
+  if (!swOk || swX === null) return; const t = e.changedTouches[0], dx = t.clientX - swX, dy = t.clientY - swY; swX = null;
+  if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.8) subGo((+subState[view] || 0) + (dx < 0 ? 1 : -1));
+}, { passive: true });
+// 하나만 펼치기: 같은 묶음 안에서 하나를 열면 나머지는 접기
+const ONE_OPEN = 'details.sec, details.bgroup, details.fcard, details.td, details.acc, details.insitem, details.wish-d';
+document.addEventListener('toggle', e => {
+  const d = e.target; if (!d.open || !d.matches || !d.matches(ONE_OPEN)) return;
+  const scope = d.parentElement && (d.matches('details.sec') ? d.closest('.subpane') || d.parentElement : d.parentElement); if (!scope) return;
+  [...scope.querySelectorAll(':scope > details[open], :scope > * > details[open], :scope > li > details[open]')].forEach(o => { if (o !== d && o.matches(ONE_OPEN) && o.className.split(' ')[0] === d.className.split(' ')[0] && !o.contains(d) && !d.contains(o)) o.open = false; });
+}, true);
 
 
 
