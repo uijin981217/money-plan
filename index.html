@@ -2829,15 +2829,21 @@ function isNameLine(l) {
   if (hangulCount(c) < 3 && !(ORG.test(c) && hangulCount(c) >= 2)) return false;
   return c;
 }
+function totalOf(t) {
+  const L = linesOf(t);
+  for (let i = 0; i < L.length; i++) if (/총자산|순자산/.test(ns(L[i]))) { const w = wonOf(L[i]) ?? (L[i + 1] ? wonOf(L[i + 1]) : null); if (w !== null) return w; }
+  return null;
+}
 function layoutOf(t) {
   const k = ns(t), c = re => (k.match(re) || []).length;
   if (c(/포함|제외/g) >= 3) return 'below';       // 토스 자산 편집: 금액 ↓ 이름
   if (c(/송금|잔액보기|더보기/g) >= 2) return 'above'; // 카카오페이: 이름 ↓ 금액
   return 'above';
 }
-function parseAssets(text) {
-  const L = linesOf(text), out = [], used = new Set(), mode = layoutOf(text);
-  let total = null, prev = '';
+function parseAssets(text, forceMode, forceTotal) {
+  const L = linesOf(text), out = [], used = new Set(), mode = forceMode || layoutOf(text);
+  let total = forceTotal != null ? man1(forceTotal) : null, prev = '';
+  const totalDigits = forceTotal ? String(Math.round(forceTotal)) : '';
   for (let i = 0; i < L.length; i++) {
     const l = L[i], k = ns(l);
     if (/총자산|순자산|자산합계/.test(k)) { const w0 = wonOf(l); total = w0 !== null ? man1(w0) : (L[i + 1] && wonOf(L[i + 1]) !== null ? man1(wonOf(L[i + 1])) : total); if (w0 === null) used.add(i + 1); prev = ''; continue; }
@@ -2862,11 +2868,12 @@ function parseAssets(text) {
     if (w < 1000) continue;
     const amt = man1(w);
     if (total !== null && Math.abs(amt - total) < 0.5) continue;
+    if (totalDigits && String(Math.round(w)).length >= 4 && totalDigits.endsWith(String(Math.round(w)))) continue; // 잘려 읽힌 총자산
     name = name.slice(0, 30);
     const kk = ns(name);
     const type = /대출|카드값|카드대금|마이너스|할부|빚/.test(kk) ? 'debt' : /연금|IRP|퇴직/i.test(kk) ? 'pension' : /주식|증권|ETF|펀드|ISA|코인|비트|투자|해외|meritz|키움|미래에셋|한투|한국투자/i.test(kk) && !/통장/.test(kk) ? 'invest' : /보증금|전세|아파트|주택(?!드림)/.test(kk) ? 'property' : /자동차|차량/.test(kk) ? 'car' : 'cash';
     const sus = !name;
-    out.push({ name, type, amt, sus });
+    out.push({ name, type, amt, sus, w: Math.round(w) });
   }
   const seen = new Set(); return out.filter(a => { const key = a.amt + '|' + a.name; if (seen.has(key)) return false; seen.add(key); return true; });
 }
@@ -2940,16 +2947,32 @@ async function ocrPrep(file) {
     g.putImageData(im, 0, 0); return c;
   } catch (e) { return file; }
 }
-async function ocrText(file) {
+async function ocrText(file, crop) {
   const w = await ocrWorker();
-  const { data } = await w.recognize(await ocrPrep(file));
+  const img = await ocrPrep(file);
+  const opt = {};
+  if (crop && img.width) opt.rectangle = { left: Math.round(img.width * crop[0]), top: 0, width: Math.round(img.width * (crop[1] - crop[0])), height: img.height };
+  const { data } = await w.recognize(img, opt);
   return data.text || '';
 }
 async function readLocal(files, text, force, prog) {
   const res = [];
   if (files.length) {
     try { prog('읽기 준비 중…'); await ocrWorker(prog); } catch (e) { throw { code: 'ocr_load' }; }
-    for (let i = 0; i < files.length; i++) { prog(`${i + 1} / ${files.length}장 읽는 중…`); res.push(parseAny(await ocrText(files[i]), force)); }
+    for (let i = 0; i < files.length; i++) {
+      prog(`${i + 1} / ${files.length}장 읽는 중…`);
+      const t = await ocrText(files[i]); let r = parseAny(t, force);
+      // 토스 자산 편집 화면: 아이콘·포함 버튼을 빼고 한 번 더 읽으면 훨씬 정확해요
+      if (r.kind === 'assets' && layoutOf(t) === 'below') {
+        try { const t2 = await ocrText(files[i], [0.14, 0.78]); const a2 = parseAssets(t2, 'below', totalOf(t));
+          // 두 번 읽은 금액 맞춰보기: '원'을 숫자로 잘못 읽어 끝자리가 붙은 경우 바로잡기
+          const full = new Set(linesOf(t).map(wonOf).filter(v => v !== null).map(Math.round));
+          a2.forEach(a => { if (!full.has(a.w) && full.has(Math.floor(a.w / 10))) { a.w = Math.floor(a.w / 10); a.amt = man1(a.w); } });
+          const a3 = a2.filter(a => a.w >= 1000 && !(full.size && a.w > Math.max(...full)));
+          if (a3.length >= r.assets.length) r = { kind: 'assets', assets: a3 }; } catch (e) { }
+      }
+      res.push(r);
+    }
   }
   if (text && text.trim()) res.push(parseAny(text, force));
   return res;
