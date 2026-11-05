@@ -2787,17 +2787,24 @@ function classify(text) {
   return best[1] >= 2 ? best[0] : 'assets';
 }
 
+function cleanName(n) {
+  n = n.replace(/[ㄱ-ㅣ]/g, '').replace(/[^가-힣A-Za-z0-9()·&\-\s]/g, ' ').replace(/\s+/g, ' ').trim();
+  const tk = n.split(' ');
+  if (tk.length >= 3 && tk.filter(t => t.length === 1).length / tk.length >= 0.5) n = n.replace(/(?<=[가-힣]) (?=[가-힣])/g, '');
+  n = n.split(' ').filter((t, i, a) => !(t.length === 1 && /[A-Za-z0-9]/.test(t) && (i === 0 || i === a.length - 1))).join(' ');
+  return n.replace(/^[\-·()\s]+|[\-·(\s]+$/g, '').trim();
+}
 function parseAssets(text) {
   const L = linesOf(text), out = [];
   let prev = '';
   for (const l of L) {
     const w = wonOf(l);
     const label = l.replace(/[-+]?\d[\d,.]*\s*(억|만|원)*/g, ' ').replace(/[원>›→·•*]/g, ' ').replace(/\s+/g, ' ').trim();
-    if (w === null || w < 1000) { if (label.length >= 2 && !/^\d/.test(label)) prev = label; continue; }
+    if (w === null || w < 1000) { const c = cleanName(label); if (c.length >= 2 && !/^\d/.test(c)) prev = c; continue; }
     if (/%|수익|손익|이자|이번\s*달|지난\s*달|총|합계|전체|순자산|자산\s*$|평가금/.test(l)) { prev = ''; continue; }
     let name = label.length >= 2 ? label : prev;
     if (!name) continue;
-    name = name.replace(/\d{3,}[-\d]*/g, '').replace(/\s+/g, ' ').trim().slice(0, 30);
+    name = cleanName(name.replace(/\d{3,}[-\d]*/g, '')).slice(0, 30);
     if (name.length < 2) continue;
     const k = ns(name + ' ' + prev);
     const type = /대출|카드값|카드대금|마이너스|할부|빚/.test(k) ? 'debt' : /연금|IRP|퇴직/i.test(k) ? 'pension' : /주식|증권|ETF|펀드|ISA|코인|비트|투자|해외/i.test(k) ? 'invest' : /보증금|전세|아파트|주택/.test(k) ? 'property' : /자동차|차량/.test(k) ? 'car' : 'cash';
@@ -2862,9 +2869,22 @@ async function ocrWorker(onP) {
   _ocr = await Tesseract.createWorker(['kor', 'eng'], 1, { logger: m => { if (onP && m.status === 'loading language traineddata') onP('처음 한 번 글자 데이터 받는 중…'); } });
   return _ocr;
 }
+async function ocrPrep(file) {
+  try {
+    const bmp = await createImageBitmap(file);
+    const sc = bmp.width < 1400 ? 2 : 1;
+    const c = document.createElement('canvas'); c.width = bmp.width * sc; c.height = bmp.height * sc;
+    const g = c.getContext('2d'); g.imageSmoothingQuality = 'high'; g.drawImage(bmp, 0, 0, c.width, c.height);
+    const im = g.getImageData(0, 0, c.width, c.height), d = im.data;
+    let sum = 0; for (let i = 0; i < d.length; i += 4) sum += d[i] * .3 + d[i + 1] * .59 + d[i + 2] * .11;
+    const dark = sum / (d.length / 4) < 110; // 다크모드 캡처는 뒤집기
+    for (let i = 0; i < d.length; i += 4) { let v = d[i] * .3 + d[i + 1] * .59 + d[i + 2] * .11; if (dark) v = 255 - v; v = v > 200 ? 255 : v < 120 ? 0 : (v - 120) * 255 / 80; d[i] = d[i + 1] = d[i + 2] = v; }
+    g.putImageData(im, 0, 0); return c;
+  } catch (e) { return file; }
+}
 async function ocrText(file) {
   const w = await ocrWorker();
-  const { data } = await w.recognize(file);
+  const { data } = await w.recognize(await ocrPrep(file));
   return data.text || '';
 }
 async function readLocal(files, text, force, prog) {
