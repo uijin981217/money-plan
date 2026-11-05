@@ -2801,28 +2801,41 @@ function cleanName(n) {
 const ORG = /토스|카카오|케이뱅크|국민|KB|신한|우리|하나|농협|NH|기업|IBK|SC|씨티|부산|대구|경남|광주|전북|제주|수협|새마을|신협|우체국|키움|삼성|미래에셋|한국투자|한투|메리츠|meritz|대신|유안타|하이|교보|DB|현대|롯데|BC|비씨|업비트|빗썸|네이버|페이|뱅크|증권|은행|카드|저축|적금|예금|통장|CMA|ISA|IRP|연금|청약|파킹|세이프박스|펀드|주식|대출/i;
 const SKIP = /총자산|순자산|자산\s*합계|포함|제외|더\s*보기|전체\s*보기|숨김|자산\s*연결|새로고침|업데이트|기준|이번\s*달|지난\s*달|소비|수익률|손익|%|포인트\s*적립|혜택|광고/;
 function hangulCount(s) { return (s.match(/[가-힣]/g) || []).length; }
+const SECTION = /^(입출금|저축|투자|대출|카드|증권|연금|보험|현금|자산|부채|기타)$/;
+function isNameLine(l) {
+  if (wonOf(l) !== null) return false;
+  const c = cleanName(l.replace(/[·•]\s*주계좌.*$/, '').replace(/[-+]?\d+(\.\d+)?%/g, ''));
+  if (hangulCount(c) < 2 && !ORG.test(c)) return false;
+  if (SECTION.test(ns(c)) || /^(전체)?(포함|제외)$/.test(ns(c)) || /총자산|순자산/.test(ns(c))) return false;
+  return c;
+}
 function parseAssets(text) {
-  const L = linesOf(text), out = [];
-  let prev = '', total = null;
+  const L = linesOf(text), out = [], used = new Set();
+  let total = null, prev = '';
   for (let i = 0; i < L.length; i++) {
-    const l = L[i], w = wonOf(l);
-    const label = l.replace(/[-+]?\d[\d,.]*\s*(억|만|원)*/g, ' ').replace(/[원>›→·•*~=®©|\[\]{}]/g, ' ').replace(/\s+/g, ' ').trim();
-    // 총자산은 금액이 같은 줄이나 다음 줄에 있어요 → 그 금액은 개별 항목에서 빼기
-    if (/총자산|순자산|자산\s*합계/.test(ns(l))) { total = w !== null ? man1(w) : (L[i + 1] && wonOf(L[i + 1]) !== null ? man1(wonOf(L[i + 1])) : total); prev = ''; continue; }
-    if (w === null || w < 1000) { const c = cleanName(label); if (hangulCount(c) >= 2 && !SKIP.test(c)) prev = c; else if (SKIP.test(l)) prev = ''; continue; }
-    if (SKIP.test(l) && !ORG.test(label.replace(SKIP, ''))) { prev = ''; continue; }
-    let name = cleanName(label.replace(SKIP, '').replace(/\d{3,}[-\d]*/g, ''));
-    if (hangulCount(name) < 2 && !ORG.test(name)) name = prev || name;
+    const l = L[i], k = ns(l);
+    if (/총자산|순자산|자산합계/.test(k)) { const w0 = wonOf(l); total = w0 !== null ? man1(w0) : (L[i + 1] && wonOf(L[i + 1]) !== null ? man1(wonOf(L[i + 1])) : total); if (w0 === null) used.add(i + 1); continue; }
+    if (used.has(i)) continue;
+    const w = wonOf(l);
+    if (w === null) { const n = isNameLine(l); if (n) prev = n; continue; }
+    // 같은 줄에 있는 이름 (포함/제외 버튼·기호 빼고)
+    let name = cleanName(l.replace(/[-+]?\d[\d,.]*\s*(억|만|원)*/g, ' ').replace(/(전체\s*)?(포함|제외)/g, ' ').replace(/[원>›→·•*~=®©|\[\]{}^]/g, ' '));
+    if (hangulCount(name) < 2 && !ORG.test(name)) {
+      name = '';
+      // 토스·카카오페이처럼 금액 아래 줄에 이름이 있는 화면
+      for (let j = i + 1; j <= i + 3 && j < L.length; j++) { if (wonOf(L[j]) !== null) break; const n = isNameLine(L[j]); if (n) { name = n; used.add(j); break; } }
+      if (!name) name = prev;
+    }
     prev = '';
-    name = name.slice(0, 30);
+    if (w < 1000) continue;
     const amt = man1(w);
     if (total !== null && Math.abs(amt - total) < 0.5) continue;
-    const k = ns(name);
-    const type = /대출|카드값|카드대금|마이너스|할부|빚/.test(k) ? 'debt' : /연금|IRP|퇴직/i.test(k) ? 'pension' : /주식|증권|ETF|펀드|ISA|코인|비트|투자|해외|meritz|키움|미래에셋|한투|한국투자/i.test(k) ? 'invest' : /보증금|전세|아파트|주택/.test(k) ? 'property' : /자동차|차량/.test(k) ? 'car' : 'cash';
+    name = name.slice(0, 30);
+    const kk = ns(name);
+    const type = /대출|카드값|카드대금|마이너스|할부|빚/.test(kk) ? 'debt' : /연금|IRP|퇴직/i.test(kk) ? 'pension' : /주식|증권|ETF|펀드|ISA|코인|비트|투자|해외|meritz|키움|미래에셋|한투|한국투자/i.test(kk) && !/통장/.test(kk) ? 'invest' : /보증금|전세|아파트|주택(?!드림)/.test(kk) ? 'property' : /자동차|차량/.test(kk) ? 'car' : 'cash';
     const sus = hangulCount(name) < 2 && !ORG.test(name);
     out.push({ name: sus ? '' : name, type, amt, sus });
   }
-  // 같은 금액이 여러 번 나오면 하나만
   const seen = new Set(); return out.filter(a => { const key = a.amt + '|' + a.name; if (seen.has(key)) return false; seen.add(key); return true; });
 }
 const HT_KW = [[/신용카드(?!등)/, 'credit'], [/직불|체크카드/, 'check'], [/현금영수증/, 'check'], [/전통시장/, 'market'], [/대중교통/, 'market'], [/도서|공연|박물관|미술관|체육|문화/, 'culture'], [/의료비/, 'medical'], [/교육비/, 'education'], [/기부금/, 'donation'], [/보장성|일반보험|보험료/, 'protectInsurance'], [/연금저축/, 'pensionSavings'], [/퇴직연금|IRP/i, 'irp'], [/청약/, 'subscription'], [/월세/, 'rent'], [/임차|전세자금|원리금/, 'leaseLoan'], [/기납부|이미낸/, 'withheld']];
