@@ -566,6 +566,17 @@ header.top{background:var(--bg)!important;backdrop-filter:none!important;-webkit
 .pkl{flex:none;font-size:11.5px;color:var(--muted);width:2.4em}
 .pk{flex:none;font:inherit;font-size:12.5px;padding:3px 10px;border-radius:99px;border:1px solid var(--line);background:transparent;color:var(--fg);cursor:pointer}
 .pk.on{background:var(--hl);border-color:color-mix(in srgb,var(--warn) 45%,transparent)}
+.coach .fchips{gap:6px}
+.coach-big{font-family:var(--f-hand);font-weight:600;font-size:24px;letter-spacing:-.04em}
+.coachbar{position:relative;height:8px;border-radius:99px;background:var(--line);overflow:hidden}
+.coachbar i,.coachbar b{position:absolute;inset:0 auto 0 0;border-radius:99px}
+.coachbar i{background:var(--c-save)}.coachbar b{background:var(--c-left)}
+.lever{font:inherit;width:100%;display:grid;grid-template-columns:20px minmax(0,1fr) auto;gap:10px;align-items:start;text-align:left;padding:10px 0;border:0;border-top:1px solid var(--line);background:transparent;color:var(--fg);cursor:pointer}
+.lever:first-of-type{border-top:0}
+.lv-bx{width:18px;height:18px;margin-top:2px;border:1.5px solid var(--muted);border-radius:4px;display:grid;place-items:center;font-size:12px;color:var(--surface)}
+.lever.on .lv-bx{background:var(--accent);border-color:var(--accent)}
+.lv-t{display:grid;gap:1px}.lv-t b{font-weight:600;font-size:14.5px}.lv-t .note{line-height:1.45}
+.lv-s{font-size:13px;color:var(--good);white-space:nowrap;margin-top:2px}
 </style>
 
 <style>html,body{margin:0}*,*::before,*::after{box-sizing:border-box}</style>
@@ -2066,9 +2077,9 @@ const SECS = {
   policy: { '놓치기 쉬운 제도': 'good', '현행 제도': 'good', '2026 세제개편안': 'good', '출처': null },
   ins: { '증권으로 자동 채우기': null, '보장 점검': 'crit' },
   tax: { '홈택스 미리보기로 채우기': null, '카드 · 현금영수증': null, '연금 · 주거 · 기타': null, '계산 과정': null },
-  plan: { '목표 자금': null, '노후 자금 시뮬레이션': null, '인생 이벤트 시뮬레이터': null },
+  plan: { '목표 코치': null, '목표 자금': null, '노후 자금 시뮬레이션': null, '인생 이벤트 시뮬레이터': null },
 };
-const SEC_DEFAULT_OPEN = new Set(['plan:인생 이벤트 시뮬레이터', 'plan:노후 자금 시뮬레이션', 'ins:보장 점검']);
+const SEC_DEFAULT_OPEN = new Set(['plan:목표 코치', 'plan:인생 이벤트 시뮬레이터', 'plan:노후 자금 시뮬레이션', 'ins:보장 점검']);
 let secState = {};
 try { secState = JSON.parse(localStorage.getItem('fp-secs') || '{}') || {}; } catch (e) { secState = {}; }
 const secOpen = k => k in secState ? secState[k] : SEC_DEFAULT_OPEN.has(k);
@@ -2730,6 +2741,89 @@ document.addEventListener('change', e => {
   const t = e.target; if (!isManInput(t)) return;
   if ((+t.value || 0) >= 1000000) toast(`만원 단위예요 · ${nf.format(Math.round(t.value / 1e4))}만원이면 ${Math.round(t.value / 1e4)}`);
 });
+
+
+// ===================== 목표 코치 (플랜 탭) =====================
+function coachGoals(x) {
+  const liquid = x.cash + x.invest + x.pension;
+  const gs = S.goals.filter(g => +g.target > 0).map(g => ({ id: g.id, name: g.name || '이름 없는 목표', target: +g.target * W, current: (+g.current || 0) * W }));
+  if (liquid < 1e8) gs.push({ id: 'first1e8', name: '첫 1억', target: 1e8, current: liquid });
+  return gs;
+}
+function coachMonths(g, monthly, r) {
+  if (g.current >= g.target) return 0;
+  if (monthly <= 0 && r <= 0) return null;
+  for (let m = 1; m <= 600; m++) if (futureValue(g.current, monthly, r, m / 12) >= g.target) return m;
+  return null;
+}
+function coachLevers(x) {
+  const L = [], net = x.th.net;
+  if (x.left >= 1e4) L.push({ k: 'left', t: '남는 돈 자동이체', d: `매달 어디에도 안 정해진 ${man(x.left)}을 월급날 저축 통장으로 자동이체해요.`, add: x.left });
+  const vars = S.budget.filter(b => b.group === 'var' && +b.amt > 0).sort((a, b) => b.amt - a.amt);
+  if (x.vari > 0) L.push({ k: 'var10', t: '생활비 10% 줄이기', d: vars.slice(0, 2).map(b => `${esc(b.name || '생활비')} ${nf.format(+b.amt)}만 → ${nf.format(Math.round(b.amt * 9) / 10)}만`).join(', ') + (vars.length > 2 ? ' 등' : ''), add: x.vari * 0.1 });
+  const insOver = x.insPremium - net * 0.08;
+  if (insOver >= 2e4) L.push({ k: 'ins', t: '보험료 점검', d: `보장성 보험료가 실수령의 ${pct(x.insRate, 1)}예요. 겹치는 특약을 정리해 8% 수준이 되면 월 ${man(insOver)} 여유가 생겨요.`, add: insOver });
+  const pr = +S.settings.parkRate || 0, br = +S.settings.baseRate || 0, idle = x.cash - x.spend * 3;
+  if (pr > br && idle >= 100 * W) L.push({ k: 'park', t: '놀고 있는 돈 금리 올리기', d: `비상금(생활비 3개월치)을 빼고 남는 현금 ${man(idle)}을 금리 ${br}% → ${pr}% 파킹통장·CMA로 옮겨요.`, add: idle * (pr - br) / 100 / 12 });
+  const hasYF = S.budget.some(b => /청년미래적금/.test(b.name || ''));
+  if (!hasYF && x.age >= 19 && x.age <= 34 && x.pw.salary > 0 && x.pw.salary <= 6e7) { const rate = x.pw.salary <= 3.6e7 ? 0.12 : 0.06; L.push({ k: 'yf', t: '청년미래적금 정부 기여금', d: `월 50만원까지 넣으면 정부가 ${Math.round(rate * 100)}%(월 ${man(50 * W * rate)})를 더 얹어줘요. 3년 만기라 3년 안쪽 목표에 잘 맞아요.`, add: 50 * W * rate });
+  }
+  if (x.st.refund > 1e4) L.push({ k: 'refund', t: '연말정산 환급 넣기', d: `올해 돌려받을 예상 ${man(x.st.refund)}을 받는 날 바로 목표 통장에 넣어요.`, add: x.st.refund / 12 });
+  if (x.th.bonusNet > 0) L.push({ k: 'bonus', t: '성과급 절반 넣기', d: `성과급 실수령 약 ${man(x.th.bonusNet)}의 50%를 목표에 넣어요.`, add: x.th.bonusNet * 0.5 / 12 });
+  return L;
+}
+function coachInvest(g, months) {
+  const yrs = months === null ? 99 : months / 12;
+  const isa = !S.assets.some(a => /ISA/i.test(a.name || '')) && !S.budget.some(b => /ISA/i.test(b.name || ''));
+  if (yrs <= 3) return `${months}개월 뒤 쓸 돈이라 주식보다 예적금·파킹통장이 맞아요. 이 목표는 수익률을 올리기보다 원금을 지키는 쪽을 권해요.`;
+  const base = +S.settings.ret || 0;
+  return `목표까지 ${Math.round(yrs)}년 넘게 남아서 일부를 지수 ETF 같은 분산 상품에 적립식으로 나누는 방법이 있어요. 계산 가정 수익률이 ${base}%에서 ${base + 2}%가 되면 얼마나 빨라지는지 위 날짜와 비교해 보세요. 다만 손실이 날 수 있고, 특정 상품을 추천하는 건 아니에요.${isa ? ' 같은 투자라도 ISA 계좌에서 하면 수익 200만원(서민형 400만원)까지 세금이 없어요.' : ''}`;
+}
+const coachState = () => (S.coach = S.coach || { goal: null, on: [] });
+const _planHtmlC = views.plan.html;
+views.plan.html = function () {
+  return _planHtmlC().replace('<div class="card"><h3>인생 이벤트 시뮬레이터</h3>', `<div class="card coach"><h3>목표 코치</h3><div class="fchips" id="coachGoals"></div><div id="coachHead" class="stack"></div><div id="coachList"></div><details class="more"><summary>참고 · 투자로 수익률 올리기</summary><p class="note" id="coachInv" style="margin-top:8px"></p></details></div><div class="card"><h3>인생 이벤트 시뮬레이터</h3>`);
+};
+const _planUpdC = views.plan.update;
+views.plan.update = function () {
+  _planUpdC();
+  if (!document.getElementById('coachHead')) return;
+  const x = snapshot(), cs = coachState(), gs = coachGoals(x);
+  if (!gs.length) { set('coachGoals', ''); set('coachHead', '<p class="note">아래 「목표 자금」에 목표를 넣으면 빨리 도달하는 방법을 계산해 드려요.</p>'); set('coachList', ''); return; }
+  const g = gs.find(v => v.id === cs.goal) || gs[0];
+  set('coachGoals', gs.map(v => `<button type="button" class="fchip" data-coach-goal="${v.id}" aria-pressed="${v === g}">${esc(v.name)}</button>`).join(''));
+  const monthly = x.save;
+  const ym = m => m === null ? '50년 넘게' : m === 0 ? '이미 달성' : `${now().getFullYear() + Math.floor((now().getMonth() + m) / 12)}년 ${((now().getMonth() + m) % 12) + 1}월`;
+  let m0 = coachMonths(g, monthly, (+S.settings.ret || 0) / 100);
+  const r = (m0 !== null && m0 <= 36 ? Math.min(+S.settings.ret || 0, +S.settings.parkRate || 3) : +S.settings.ret || 0) / 100;
+  m0 = coachMonths(g, monthly, r);
+  const levers = coachLevers(x).map(l => { const m = coachMonths(g, monthly + l.add, r); return { ...l, save: m0 === null ? (m === null ? 0 : 600 - m) : Math.max(0, m0 - (m ?? m0)) }; }).sort((a, b) => b.save - a.save || b.add - a.add);
+  const on = new Set(cs.on.filter(k => levers.some(l => l.k === k)));
+  const addAll = levers.filter(l => on.has(l.k)).reduce((a, l) => a + l.add, 0);
+  const m1 = coachMonths(g, monthly + addAll, r);
+  const done = g.current >= g.target;
+  set('coachHead', `<div class="note">${man(g.target)} 중 ${man(g.current)} 모음 · 지금 저축 계획 월 ${man(monthly)}</div>
+    <div class="row"><span class="note">지금 속도</span><span class="num">${ym(m0)}</span></div>
+    <div class="row"><span>고른 방법을 다 하면</span><span class="num coach-big">${ym(m1)}</span></div>
+    <div class="coachbar"><i style="width:100%"></i><b style="width:${m0 ? Math.max(4, (m1 ?? m0) / m0 * 100) : 100}%"></i></div>
+    <div class="note">${done ? '이미 달성했어요.' : on.size ? `<b style="color:var(--good)">${m0 === null || m1 === null ? '' : `${m0 - m1}개월 빨라져요`}</b> · 매달 ${man(monthly + addAll)}씩` : '아래 방법을 눌러 켜면 날짜가 당겨져요.'}</div>`);
+  set('coachList', done ? '' : levers.length ? `<div class="label" style="margin:4px 0 2px">효과 큰 순서 · 눌러서 켜고 끄기</div>` + levers.map(l => `<button type="button" class="lever${on.has(l.k) ? ' on' : ''}" data-lever="${l.k}" aria-pressed="${on.has(l.k)}"><span class="lv-bx" aria-hidden="true">${on.has(l.k) ? '✓' : ''}</span><span class="lv-t"><b>${l.t}</b><span class="note">${l.d}</span></span><span class="lv-s">${l.save > 0 ? `${l.save}개월 ↓` : `월 +${man(l.add)}`}</span></button>`).join('') + `<p class="note" style="margin-top:6px">목표 하나에 지금 저축을 다 쓴다고 보고 계산해요. 켠 방법은 홈 「지금 할 일」에도 들어가요.</p>` : '<p class="note">지금 숫자로는 더 당길 방법을 찾지 못했어요. 월급 탭에서 지출·저축 항목을 나눠 적으면 더 정확해져요.</p>');
+  set('coachInv', coachInvest(g, m0));
+};
+document.addEventListener('click', e => {
+  const gb = e.target.closest('[data-coach-goal]');
+  if (gb) { coachState().goal = gb.dataset.coachGoal; touch(); update(); return; }
+  const lb = e.target.closest('[data-lever]');
+  if (lb) { const cs = coachState(), k = lb.dataset.lever; cs.on = cs.on.includes(k) ? cs.on.filter(v => v !== k) : [...cs.on, k]; touch(); update(); }
+});
+// 켠 방법을 홈 「지금 할 일」에
+const _todoItemsC = todoItems;
+todoItems = function (x) {
+  const out = _todoItemsC(x), cs = S.coach; if (!cs || !cs.on || !cs.on.length) return out;
+  const gs = coachGoals(x), g = gs.find(v => v.id === cs.goal) || gs[0]; if (!g) return out;
+  coachLevers(x).filter(l => cs.on.includes(l.k)).forEach(l => out.push({ t: l.t, v: `${esc(g.name)}`, d: l.d.replace(/<[^>]+>/g, ''), p: 1.2, due: false, tags: [] }));
+  return out.sort((a, b) => a.p - b.p);
+};
 
 
 
