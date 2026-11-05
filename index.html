@@ -550,7 +550,7 @@ header.top{background:var(--bg)!important;backdrop-filter:none!important;-webkit
 .modechip{letter-spacing:-.03em!important;transform:none!important}
 .savewarn{margin:6px 0 10px;background:var(--crit-soft);border-color:color-mix(in srgb,var(--crit) 40%,transparent)}
 .savewarn b{color:var(--crit)}
-.qabar{grid-column:1/-1;display:flex;gap:4px;overflow-x:auto;padding:4px 0 2px;scrollbar-width:none;animation:rise .15s ease-out}
+.qabar{position:absolute;left:10px;right:10px;z-index:15;display:flex;gap:4px;overflow-x:auto;padding:6px;background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:0 8px 18px -10px rgba(80,60,30,.35);scrollbar-width:none;animation:fadeOnly .12s ease-out}
 .qabar::-webkit-scrollbar{display:none}
 .qabar button{flex:none;font:inherit;font-weight:400;letter-spacing:-.02em;font-size:12px;line-height:1.4;padding:3px 10px;border-radius:99px;border:1px solid var(--line);background:transparent;color:var(--muted);cursor:pointer}
 .qabar button:active{transform:scale(.95);background:var(--hl)}
@@ -2685,7 +2685,7 @@ function qaApply(v) {
   const cur = +qaInput.value || 0;
   qaInput.value = v === 0 ? '' : String(Math.round((cur + v) * 10) / 10);
   qaInput.dispatchEvent(new Event('input', { bubbles: true })); qaInput.dispatchEvent(new Event('change', { bubbles: true }));
-  qaInput.focus({ preventScroll: true });
+  qaInput.focus({ preventScroll: true }); qaPos();
 }
 function qaShow(t) {
   qaInput = t;
@@ -2697,11 +2697,20 @@ function qaShow(t) {
     qaEl.addEventListener('mousedown', e => e.preventDefault());
     qaEl.addEventListener('click', e => { if (Date.now() - qaPress > 600) { const btn = e.target.closest('[data-qa]'); if (btn) qaApply(+btn.dataset.qa); } });
   }
-  // 입력칸 바로 아래에 붙이기 (화면 하단 고정은 앱 안에서 안 보일 수 있어서)
-  const anchor = t.closest('.brow') || t.closest('.field') || t.closest('.qinput');
-  if (anchor && qaEl.previousElementSibling !== anchor) anchor.after(qaEl);
+  // 입력칸 바로 아래에 떠 있게 (다른 칸 위치는 그대로)
+  const host = t.closest('.sheet') || t.closest('.card') || t.closest('.quick') || document.getElementById('app');
+  if (getComputedStyle(host).position === 'static') host.style.position = 'relative';
+  if (qaEl.parentNode !== host) host.appendChild(qaEl);
+  qaEl.hidden = false; qaPos();
+}
+function qaPos() {
+  if (!qaEl || !qaInput || !qaEl.parentNode) return;
+  const host = qaEl.parentNode, box = qaInput.closest('.inp,.qinput,.bamt') || qaInput;
+  const hr = host.getBoundingClientRect(), br = box.getBoundingClientRect();
+  qaEl.style.top = (br.bottom - hr.top + host.scrollTop + 4) + 'px';
   qaEl.hidden = false;
 }
+document.addEventListener('input', () => { if (qaInput) requestAnimationFrame(qaPos); });
 function qaHide() { if (qaEl) { qaEl.hidden = true; qaEl.remove(); } qaInput = null; }
 document.addEventListener('focusin', e => { if (isManInput(e.target)) qaShow(e.target); });
 document.addEventListener('focusout', () => { setTimeout(() => { if (Date.now() - qaPress < 400) return; if (!isManInput(document.activeElement)) qaHide(); }, 250); });
