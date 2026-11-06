@@ -590,6 +590,7 @@ header.top{background:var(--bg)!important;backdrop-filter:none!important;-webkit
 .autohint{white-space:normal!important}
 .hero .big{font-size:26px!important;line-height:1.2}
 .hero .big + span,.hero .big span{font-size:inherit}
+.fhelp{font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 </style>
 
 <style>html,body{margin:0}*,*::before,*::after{box-sizing:border-box}</style>
@@ -884,7 +885,7 @@ function chk(path, label) {
 
 // 내 기본 정보 입력 (월급 탭 · 상황 고르기 화면 공용)
 function profileForm() {
-  return `<div class="fields compact">${fld('profile.salary', '연봉 (세전, 성과급 포함)')}${fld('profile.bonus', '그중 성과급·상여 (연)')}${fld('profile.nontax', '월 비과세 (식대 등)', '만원/월')}${fld('profile.birthYear', '출생연도', '년')}${fld('profile.dependents', '부양가족 (본인 제외)', '명')}${fld('profile.kids8', '8세 이상 자녀', '명')}</div><div class="chkgrid" style="margin-top:10px">${chk('profile.noHome', '무주택')}${chk('profile.householder', '세대주')}</div>`;
+  return `<div class="fields compact">${fld('profile.salary', '연봉 (세전, 성과급 포함)')}${fld('profile.bonus', '그중 성과급 (세전, 연)')}${fld('profile.nontax', '월 비과세 (식대 등)', '만원/월')}${fld('profile.birthYear', '출생연도', '년')}${fld('profile.dependents', '부양가족 (본인 제외)', '명')}${fld('profile.kids8', '8세 이상 자녀', '명')}</div><div class="chkgrid" style="margin-top:10px">${chk('profile.noHome', '무주택')}${chk('profile.householder', '세대주')}</div>`;
 }
 // ===== 계산 묶음 =====
 function profileWon() {
@@ -2939,6 +2940,9 @@ document.addEventListener('toggle', e => {
   const scope = d.parentElement && (d.matches('details.sec') ? d.closest('.subpane') || d.parentElement : d.parentElement); if (!scope) return;
   [...scope.querySelectorAll(':scope > details[open], :scope > * > details[open], :scope > li > details[open]')].forEach(o => { if (o !== d && o.matches(ONE_OPEN) && o.className.split(' ')[0] === d.className.split(' ')[0] && !o.contains(d) && !d.contains(o)) o.open = false; });
 }, true);
+
+// 연봉 칸 아래 짧은 안내 (세전 기준)
+const _renderPH = render; render = function () { _renderPH(); document.querySelectorAll('#f-profile-bonus').forEach(i => { const f = i.closest('.field'); if (f && !f.querySelector('.fhelp')) f.insertAdjacentHTML('beforeend', '<div class="fhelp">세금 떼기 전, 1년 합계</div>'); }); document.querySelectorAll('#f-profile-salary').forEach(i => { const f = i.closest('.field'); if (f && !f.querySelector('.fhelp')) f.insertAdjacentHTML('beforeend', '<div class="fhelp">계약서·원천징수영수증 금액</div>'); }); };
 
 
 
