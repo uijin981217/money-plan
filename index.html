@@ -586,6 +586,8 @@ header.top{background:var(--bg)!important;backdrop-filter:none!important;-webkit
 .subtrack{display:flex;align-items:flex-start;transition:transform .34s cubic-bezier(.2,.8,.2,1);will-change:transform}
 .subpane{flex:0 0 100%;min-width:0;display:grid;gap:14px;padding:4px 4px 6px;box-sizing:border-box}
 @media (prefers-reduced-motion: reduce){.subtrack,.subvp,.subind{transition:none!important}}
+.hintbtn{font:inherit;font-size:11.5px;color:var(--accent);background:none;border:0;padding:0;text-decoration:underline;cursor:pointer}
+.autohint{white-space:normal!important}
 </style>
 
 <style>html,body{margin:0}*,*::before,*::after{box-sizing:border-box}</style>
@@ -2139,16 +2141,19 @@ function linkSel(b) {
 }
 S.taxAuto = S.taxAuto || {};
 function syncTaxLinks() {
-  S.taxAuto = {};
+  S.taxAuto = {}; S.taxSrc = {}; const man_ = S.taxManual || {};
   Object.entries(LINK_FIELD).forEach(([lk, f]) => {
     const items = S.budget.filter(b => b.link === lk);
     let yr = items.reduce((s, b) => s + (+b.amt || 0), 0) * 12;
     const parts = items.map(b => `${b.name || '항목'} 월 ${nf.format(+b.amt || 0)}만`);
     if (lk === 'pension') S.insurance.filter(i => (i.cat || '') === 'annuity' && i.taxType === '세액공제').forEach(i => { yr += (+i.premium || 0) * 12; parts.push(`${i.name || '연금저축보험'} 월 ${nf.format(+i.premium || 0)}만`); });
+    if (parts.length) S.taxSrc[f] = items.length ? 'pay' : 'ins';
+    if (parts.length && man_[f]) return;
     if (parts.length) { S.tax[f] = Math.round(yr * 10) / 10; S.taxAuto[f] = parts.join(' + ') + ' × 12' + (lk === 'rent' ? ' (관리비는 공제 안 돼요. 월세만 넣으세요)' : ''); }
   });
   const prot = S.insurance.filter(i => (i.cat || (i.kind === 'annuity' ? 'annuity' : 'protect')) === 'protect');
-  if (prot.length) { S.tax.protectInsurance = Math.round(prot.reduce((a, i) => a + (+i.premium || 0), 0) * 12 * 10) / 10; S.taxAuto.protectInsurance = prot.map(i => `${i.name || '보험'} 월 ${nf.format(+i.premium || 0)}만`).join(' + ') + ' × 12'; }
+  if (prot.length) S.taxSrc.protectInsurance = 'ins';
+  if (prot.length && !man_.protectInsurance) { S.tax.protectInsurance = Math.round(prot.reduce((a, i) => a + (+i.premium || 0), 0) * 12 * 10) / 10; S.taxAuto.protectInsurance = prot.map(i => `${i.name || '보험'} 월 ${nf.format(+i.premium || 0)}만`).join(' + ') + ' × 12'; }
 }
 const _snapshot0 = snapshot; snapshot = function () { syncTaxLinks(); return _snapshot0(); };
 const _ensure0 = ensure; ensure = function (st) {
@@ -2157,6 +2162,13 @@ const _ensure0 = ensure; ensure = function (st) {
   return st;
 };
 ensure(S);
+document.addEventListener('click', e => {
+  const u = e.target.closest('[data-unlink]'), r = e.target.closest('[data-relink]');
+  if (u) { S.taxManual = { ...(S.taxManual || {}), [u.dataset.unlink]: true }; touch(); update(); const i = document.getElementById('f-tax-' + u.dataset.unlink); if (i) { i.readOnly = false; i.focus(); i.select(); } toast('이 칸은 이제 직접 입력한 값으로 계산해요'); return; }
+  if (r) { const m = { ...(S.taxManual || {}) }; delete m[r.dataset.relink]; S.taxManual = m; touch(); update(); toast('다시 자동으로 채워요'); return; }
+  const ro = e.target.closest('.field.is-auto input[readonly]');
+  if (ro) toast('다른 탭 값으로 자동으로 채워지는 칸이에요. 바꾸려면 아래 「직접 입력」을 눌러요');
+});
 const _taxUpdate0 = views.tax.update; views.tax.update = function () {
   _taxUpdate0();
   [...new Set([...Object.values(LINK_FIELD), 'protectInsurance'])].forEach(f => {
@@ -2164,8 +2176,13 @@ const _taxUpdate0 = views.tax.update; views.tax.update = function () {
     const auto = S.taxAuto[f], fieldEl = inp.closest('.field');
     inp.readOnly = !!auto; if (auto && document.activeElement !== inp) inp.value = S.tax[f];
     let hint = fieldEl.querySelector('.autohint');
-    if (auto) { if (!hint) { hint = document.createElement('div'); hint.className = 'autohint'; fieldEl.appendChild(hint); } hint.textContent = f === 'protectInsurance' ? '보험 탭에서 자동' : '월급 탭에서 자동'; hint.title = auto; fieldEl.title = auto; }
-    else if (hint) hint.remove();
+    const src = S.taxSrc && S.taxSrc[f], manual = S.taxManual && S.taxManual[f] && src;
+    if (auto || manual) {
+      if (!hint) { hint = document.createElement('div'); hint.className = 'autohint'; fieldEl.appendChild(hint); }
+      const where = src === 'ins' ? '보험 탭' : '월급 탭';
+      const html = manual ? `직접 입력 중 · <button type="button" class="hintbtn" data-relink="${f}">${where} 값으로</button>` : `${where}에서 자동 · <button type="button" class="hintbtn" data-unlink="${f}">직접 입력</button>`;
+      if (hint.innerHTML !== html) hint.innerHTML = html; hint.title = auto || ''; fieldEl.title = auto || '';
+    } else if (hint) hint.remove();
     fieldEl.classList.toggle('is-auto', !!auto);
   });
 };
