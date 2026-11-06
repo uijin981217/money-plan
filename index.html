@@ -591,6 +591,8 @@ header.top{background:var(--bg)!important;backdrop-filter:none!important;-webkit
 .hero .big{font-size:26px!important;line-height:1.2}
 .hero .big + span,.hero .big span{font-size:inherit}
 .fhelp{font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+details.bonusnote>summary{font-size:12.5px!important;font-weight:400!important;color:var(--muted)!important}
+details.bonusnote>summary::after{font-size:14px!important}
 </style>
 
 <style>html,body{margin:0}*,*::before,*::after{box-sizing:border-box}</style>
@@ -1062,7 +1064,7 @@ views.pay = {
   update() {
     const x = snapshot(), th = x.th;
     set('netPay', won(Math.round(th.net / 10) * 10));
-    set('bonusOut', th.bonus > 0 ? `<div class="row"><span>성과급·상여 <span class="note">월급과 별도</span></span><span class="num">세후 약 <b>${man(th.bonusNet)}</b></span></div><div class="note">세전 ${man(th.bonus)} − 소득세 ${man(th.bonusTax)} − 건강·고용보험 ${man(th.bonusIns)}. 받는 달엔 세금이 더 떼여 보이지만 연말정산에서 맞춰져요.</div>` : '');
+    set('bonusOut', th.bonus > 0 ? `<details class="more bonusnote"><summary>+ 성과급은 따로 · 세후 약 ${man(th.bonusNet)}</summary><div class="note" style="margin-top:4px">세전 ${man(th.bonus)} − 소득세 ${man(th.bonusTax)} − 건강·고용보험 ${man(th.bonusIns)}. 받는 달엔 세금이 더 떼여 보이지만 연말정산에서 맞춰져요.</div></details>` : '');
     set('payMini', [['세전 월급', manS(th.pay)], ['4대보험', '−' + manS(th.si.total)], ['세금', '−' + manS(th.monthlyTax)]].map(([a, b]) => `<div><div class="label">${a}</div><div class="v num">${b}</div></div>`).join(''));
     set('payRows', rows([['국민연금 4.75%', '−' + won(th.si.nps), 'minus'], ['건강보험 3.595%', '−' + won(th.si.health), 'minus'], ['장기요양 (건보료×13.14%)', '−' + won(th.si.ltc), 'minus'], ['고용보험 0.9%', '−' + won(th.si.emp), 'minus'], ['소득세+지방소득세', '−' + won(th.monthlyTax), 'minus']]));
     set('profSum', `내 연봉 정보 <span class="note">· 연봉 ${nf.format(+S.profile.salary || 0)}만원</span>`);
